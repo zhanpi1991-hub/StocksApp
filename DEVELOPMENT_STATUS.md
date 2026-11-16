@@ -1,0 +1,87 @@
+# Development status
+
+## API configuration and CoinGecko rate-limit pass
+
+### Configuration audit
+- `.env` location: `StocksApp/.env` (repo root) is the one file to use; `StocksApp/backend/.env` is also read and overrides it. Before this pass the paths were `.env` and `../.env` relative to the *current directory*, so starting the server from the repo root would have read a `.env` in the parent of the repo. They are now absolute (`app/core/config.py`) and verified from a different working directory. Real OS environment variables override both. Settings are read once at startup and `--reload` does not watch `.env`, so restart after editing.
+- Keys are read only in `app/core/config.py` and used only inside provider adapters. No frontend code, `VITE_` variable, API response, or built bundle contains a key value (bundle scanned; the only hit is the variable *name* in help text). `/api/providers` returns `configured: true/false`, never values; a test sets fake keys and checks that none leaks through `/api/providers`, `/api/health`, or the stock/news/index endpoints.
+- **Found and fixed a log leak:** `httpx` logs every request URL at INFO, and Twelve Data/FMP take the key as `?apikey=`. The `httpx`/`httpcore` loggers are now WARNING-level and a redaction filter masks `apikey=`, `x-cg-*-api-key`, `token`, `authorization` in all log output. Error messages contain only the exception class, never the URL.
+- Git: `.gitignore` already excluded `.env` and `.env.*` (verified with `git check-ignore`); no env file or key-like string is in the repo. `.env.example` contains placeholders only.
+- CoinGecko Demo auth confirmed against CoinGecko's Demo authentication docs: host `https://api.coingecko.com/api/v3`, header `x-cg-demo-api-key`. The key is sent as a header only (tested: not in the URL). Pro keys (different host/header) are not supported.
+
+### Why CoinGecko returned so many 429s (audit)
+Each crypto view made its own upstream call with different parameters (directory page, top-6 dashboard card, movers at 250, screener at 250, a call per watchlist/alert/portfolio coin each minute, one per WebSocket subscription, one per search keystroke); identical concurrent requests were not de-duplicated; cache keys changed with page size; the browser refetched after 30 s; and after a 429 nothing stopped the next request. Opening `/crypto` alone cost about 5 calls.
+
+### What changed
+- `services/crypto.py` (new): `/coins/markets` fetched in 250-row chunks per (order, category) and sliced for every page size, top-6 card, movers and screener. Coins outside the chunk are fetched in **one batched `ids=` call** (the endpoint accepts up to 250 comma-separated ids per CoinGecko docs), cached per coin. Watchlists, portfolios, alerts, WebSocket and search all go through it.
+- `providers/base.py`: single-flight de-duplication; cool-down using `Retry-After` (seconds or HTTP date, clamped 5 s to 15 min, 60 s default for CoinGecko); local per-minute and per-day request budgets that refuse requests before the provider does; stale data served as CACHED during cool-down/budget pause/outage; throttled requests no longer counted as provider errors.
+- `core/cache.py`: stale entries are now retained for 6 h (Redis previously dropped them at expiry, so CACHED could never appear there).
+- TTLs: markets 120 s (`CRYPTO_MARKETS_TTL`), global 5 min, trending 15 min, coin detail 5 min, categories 24 h, charts 5 min to 6 h by range.
+- Alerts skip stale prices (never trigger on CACHED data).
+- Frontend: crypto queries use `staleTime` matching the server TTLs (`services/cacheTimes.ts`), 15 min cache retention, no refetch on revisit. The Data providers page shows sent / cached / shared / paused counts.
+- Setup guide `docs/API_SETUP.md`; `python -m app.tools.check_providers` (checks which keys/env files loaded, one request per configured provider, never prints keys).
+- Data-status wording: removed the unverified claim that CoinGecko data refreshes "every 1-2 minutes"; the message now says aggregated and server-cached, not tick-level real time. Nothing new is labelled real-time.
+
+### Measured
+- Live, with no CoinGecko key: 10 crypto-related API requests (3 page sizes/pages, top-6, movers, screener, 2 searches, global, trending) caused 4 upstream calls and 7 cache hits.
+- Browser pane: 21 in-app navigations between crypto list, coin pages, News and Overview added 5 upstream calls (first coin and chart loads plus one TTL refresh), 0 errors, no 429s.
+
+### Tests executed (actual results)
+- Backend `pytest`: **39 passed** (22 earlier + 17 new: header-only auth and Demo host, chunk sharing across all views, second chunk slicing, single-flight with 8 concurrent calls, batched ids + per-coin cache, unknown coin 404, Retry-After parsing, 429 cool-down serving CACHED without upstream calls, local budget, stale retention, absolute env paths, key cleaning, log redaction, no key value in any API response, no key in error messages).
+- Frontend: `tsc` clean, `vitest` **15 passed**, `vite build` succeeds.
+
+### Not verified
+- **No real keys were used for any provider** (none exist in this environment). Keyed behaviour, plan coverage, and Finnhub/Twelve Data/FMP response shapes are still unverified live. After you add keys, run `python -m app.tools.check_providers`.
+- CoinGecko's Demo rate limit: the docs I could read disagree (one page says 100 calls/minute, another gives no number). The default budgets (10/min keyless, 25/min with a Demo key; Finnhub 50/min; Twelve Data 7/min and 700/day; FMP 225/day) are conservative self-imposed values, configurable in `.env`, not official limits.
+- Redis stale-retention path and Docker are untested. FMP only takes the key as a query parameter, so redaction is what protects it; Twelve Data may support an Authorization header, which was not verified.
+
+---
+
+## Bug-fix pass: crypto/news crash, images, provider status
+
+### Root cause of `Failed to execute 'replaceWith' on 'Element': Only one element on document allowed`
+`sanitize()` in `frontend/src/pages/CryptoDetail.tsx` parsed the CoinGecko description with `DOMParser` and then ran `doc.querySelectorAll('*').forEach(el => el.replaceWith(...el.childNodes))`. `querySelectorAll('*')` on a document includes the document's own `<html>` and `<head>` elements; only `<body>` was excluded. Calling `replaceWith` on `<html>` tries to insert its children into the `Document`, which throws that exception. Every coin detail page with a description crashed, and React's `ErrorBoundary` rendered "Could not load data".
+
+**Why News looked broken too:** the error boundary kept its error state forever. After a crash, navigating to News (or anywhere) kept showing the same error screen, because the boundary never reset on route change. News itself had no `replaceWith` code.
+
+**Fix:** new `utils/sanitize.ts` only visits descendants of `<body>`, uses an allow-list (`a p br strong em b i ul ol li`), removes scripts/styles, strips all attributes, and keeps only `http(s)` links with `rel="noreferrer noopener"`. The error boundary now takes a `resetKey`, and routed content is wrapped in `RouteBoundary` (keyed by pathname) inside `AppShell`, so one page failing no longer poisons navigation and the shell stays usable. Other places checked: no other `replaceWith`/`dangerouslySetInnerHTML` usage; single `createRoot`; StrictMode double-effects are safe (chart effect creates and removes its chart in cleanup); lightweight-charts only touches its own container.
+
+A regression test reproduces the original failure mode in jsdom (the DOM throws on `<html>.replaceWith`; jsdom words the message differently from Chrome) and a render test mounts `CryptoDetail` with an HTML description.
+
+### Files changed
+- Frontend: `utils/sanitize.ts` (new), `utils/images.ts` (new), `components/ui/RemoteImage.tsx` (new), `components/layout/guards.tsx`, `components/layout/AppShell.tsx`, `components/layout/SearchBox.tsx`, `components/market/bits.tsx`, `components/market/ArticleList.tsx`, `components/ui/DataState.tsx`, `pages/CryptoDetail.tsx`, `pages/Crypto.tsx`, `pages/Watchlists.tsx`, `pages/Dashboard.tsx`, `pages/Status.tsx`, `types/api.ts`, `utils/format.ts`, `vite.config.ts`, `tsconfig.json`, `package.json`, tests in `src/test/*`.
+- Backend: `providers/base.py` (error reasons, provider state/cool-down in health), `services/envelope.py` (`meta.reason`), `services/quotes.py` (image in crypto quotes), `api/routes/market.py`, `api/routes/calendars.py`, `api/routes/auth.py` (default display name), `tests/test_providers.py` (new).
+
+### Cryptocurrency images
+- The backend always preserved CoinGecko URLs: `image` in markets, `image.large` in coin detail, `thumb` in search, `small` in trending. The one gap was watchlist quotes, which dropped `image`; fixed.
+- Frontend used a bare `<img>` with no error handling. Now `Logo` uses `RemoteImage`: provider URL first, then the same path on `assets.coingecko.com`, then initials in a circle. No broken-image icons, and no URL is invented.
+- Logos now appear in the crypto list, trending/gainers/losers, dashboard snapshot, search results, watchlist rows and coin detail.
+- **What I found testing in the browser pane:** from this machine, `coin-images.coingecko.com` stalls during TLS (never errors), while `assets.coingecko.com` serves the same files (HTTP 200, `image/png`). A hanging host never fires `onError`, so each attempt now has a 6 s deadline before trying the next source. Verified in the pane: 64 of 64 logos loaded on `/crypto` via the alternate host. The console shows `ERR_CONNECTION_CLOSED/RESET` resource errors for the blocked first host; those are network noise, not app exceptions. On networks where the primary host works, logos load directly with no delay.
+- Images no longer use native lazy loading (it conflicts with the per-image deadline); up to ~100 logos per page load eagerly.
+
+### News images
+- Finnhub `image` is passed through (`""` becomes `null`) by the adapter and the `/api/news` endpoint (covered by a mocked-provider test). Thumbnails render when present; otherwise, or on failure/timeout, a neutral tile (icon + source name) is shown. A failing image cannot break the page.
+- **Not verified live:** no Finnhub key was available, so real article images and Finnhub's hot-linking behaviour were not seen. Some publishers' CDNs may reject hot-linking; those fall back to the tile.
+
+### Provider integration status (what is actually known)
+- Why Overview showed many UNAVAILABLE: no Twelve Data/Finnhub/FMP keys were configured. Verified by test and by running the API: every index row reports `reason: no_key`. This is expected, not a parsing bug.
+- New: every unavailable response carries `meta.reason` (`no_key`, `plan_required`, `rate_limited`, `network`, `bad_response`, `provider_error`). The UI shows a tailored title, a clear explanation and a Retry button only where retrying makes sense (not for missing key / paid plan). The Overview index card now has a banner saying why indices are missing. Each dashboard panel is its own query, so one failing provider never blanks the others.
+- Provider status page now has a status legend, a per-provider state (`Working`, `Ready`, `No API key`, `Rate limited` with cool-down seconds, `Last request failed`), what each provider powers, and how to fix it.
+- HTTP 429 sets a provider cool-down (honours `Retry-After`, default 30 s) and blocks further upstream calls until it ends (tested). Provider failures return HTTP 200 envelopes, so React Query does not retry them automatically; users retry manually.
+- Verified against real services: CoinGecko (crypto lists, detail, charts, global) and Frankfurter (forex, KZT).
+- **Not verified with real keys:** Finnhub, Twelve Data, FMP. Their parsing is covered only by mocked responses shaped like the documented payloads, so field names (notably FMP `stable` endpoints and Twelve Data index symbols `KS11`/`IMOEX`/`KASE`) may need adjusting once you run with keys.
+
+### Default display name
+Origin: `backend/app/api/routes/auth.py` defaulted a blank display name to the email's local part (`email.split("@")[0]`), which showed an arbitrary string in the header. It is now `User`. Existing accounts keep whatever name they have; custom names are preserved (tested). No seed data or demo accounts exist in the repo.
+
+### Tests executed (actual results)
+- Backend `pytest`: **22 passed** (7 original + 15 new: image propagation for markets/detail/search/watchlist quotes, missing image stays `null`, Finnhub news image and quote parsing, empty quote is unavailable, missing key reason, plan-required via 200 body and via HTTP 403, 429 cool-down and no hammering, network failure, stale cache labelled `cached` not realtime, endpoint reasons with no keys, display-name defaults).
+- Frontend `vitest`: **15 passed** (sanitizer, `RemoteImage`/`Logo` fallbacks and timeout, alternate host, article thumbnails, error-boundary reset, unavailable-state reasons, `CryptoDetail` render with HTML description).
+- Frontend `tsc` type-check: clean. `vite build`: succeeds.
+- Browser (built-in pane, no provider keys): loaded `/crypto/bitcoin`, `/crypto`, `/news`; ran 18 in-app route transitions between coin pages, News and Crypto, with no error state shown. No JavaScript exceptions logged; only the network resource errors described above. Signed-in pages, mobile layout and light theme were not re-checked.
+
+### Remaining limitations
+- Keyed providers unverified live (see above); Docker, Postgres, Redis, deploys still unverified.
+- CoinGecko's keyless tier rate-limits quickly; set `COINGECKO_API_KEY` for steady use.
+- If both CoinGecko image hosts are blocked, logos show initials.
+- Earlier limitations still apply: polling-based live updates, single-process WebSocket/rate limiter, weekday-only session schedule, sector-level heatmap, screener filters limited to provider fields, no email/push alerts, JWT in localStorage.
