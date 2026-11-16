@@ -70,11 +70,13 @@ Exact provider free-tier limits change; verify against each provider's current d
 ## Tests and checks
 
 ```bash
-cd backend && pytest                     # 22 tests: portfolio math, alerts, providers (mocked), images, error reasons, auth
+cd backend && pip install -r requirements-dev.txt && pytest                     # 56 tests: portfolio math, alerts, providers (mocked), rate limits, deployment guards, auth
 cd frontend && npm run typecheck && npm test && npm run build
 ```
 
 ## Deploying
+
+**Full guide: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** (Render + Vercel + migrations + environment variables). Audit results are at the top of [DEVELOPMENT_STATUS.md](DEVELOPMENT_STATUS.md). Summary:
 
 - Frontend on Vercel: root `frontend/`, set `VITE_API_URL` and `VITE_WS_URL` to the backend (see `.env.example`). `vercel.json` handles SPA routing.
 - Backend on Render: `render.yaml` (Docker + Postgres). Set `CORS_ORIGINS` to the frontend URL and the provider keys.

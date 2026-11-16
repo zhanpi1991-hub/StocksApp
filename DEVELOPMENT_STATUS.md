@@ -1,5 +1,53 @@
 # Development status
 
+## Production deployment readiness audit (Render + Vercel + PostgreSQL)
+
+**Score: 72 / 100. Ready for a first *staging* deployment; not yet for real user data.** The remaining gap is evidence, not known bugs: PostgreSQL, the Docker image, Render and Vercel were never run here, and none of the four provider keys has been exercised live.
+
+| Area | Score | Evidence |
+|---|---|---|
+| Backend config and startup safety | 88 | Production guard (tests), docs off in prod, CORS exact + no credentials, hardened WebSocket (tests), real prod-mode uvicorn smoke run |
+| Database / PostgreSQL | 62 | Migration compiled to PostgreSQL DDL (valid, reviewed) and runs on SQLite; code reviewed for SQLite-isms (none found); **no live PostgreSQL run** |
+| Backend container / Render | 65 | Dockerfile and `render.yaml` reviewed against Render docs; **image never built (no Docker here)** |
+| Frontend / Vercel | 78 | Production build, CSP/headers served by `vite preview` and exercised in a browser, SPA deep links, banner on missing API; not deployed |
+| Security | 80 | No secrets committed (history scanned), keys backend-only, log redaction, auth rate limit; JWT in localStorage remains |
+| External providers | 55 | Missing-key behaviour tested; keyed endpoints and plan coverage unverified |
+
+### Critical blockers (none are code defects left open)
+1. **Free Render Postgres expires after 30 days with no backups** (Render docs). Pick a paid database or an external managed Postgres before real data.
+2. **PostgreSQL runtime unverified.** First deploy is the first real run of the migration and ORM on Postgres; treat it as staging and run the manual checks in `docs/DEPLOYMENT.md`.
+3. **Cross-service URLs must be set correctly** (`CORS_ORIGINS` on Render, `VITE_API_URL` on Vercel) or the site cannot talk to the API. The app now shows a banner when this is wrong.
+
+### Defects found and fixed
+- Production could start with the default JWT secret or silently with ephemeral SQLite -> startup now refuses (`core/config.py`).
+- `render.yaml` had no `plan`, and Render's default for new services is a paid plan; `autoDeploy` is deprecated -> `plan: free`, region, `autoDeployTrigger: off`, DB name/user/version.
+- Behind Render's proxy every user would share one rate-limit IP -> `--proxy-headers`; limiter rewritten (bounded memory, health exempt, separate login/register bucket of 10/min).
+- WebSocket JWT was in the URL (written to access logs) -> sent in an `auth` message; Origin check against `CORS_ORIGINS`; 8 KB message cap; client heartbeat every 25 s; re-auth on login/logout.
+- `/api/health` returned 200 when the DB was down and was rate-limited -> 503 on DB failure, never limited.
+- `backend/.dockerignore` did not exclude `.env` -> excluded (also frontend); container now runs as non-root with a HEALTHCHECK.
+- Requirements were unpinned `>=` and shipped pytest -> exact pins (resolution for Linux/Python 3.12 checked with `pip install --dry-run`), `requirements-dev.txt` for tests.
+- CORS: trailing slashes normalised, optional regex for Vercel previews, credentials disabled (Bearer auth, no cookies), methods/headers restricted.
+- `vercel.json` only had an SPA fallback (so `/api` on Vercel would return `index.html`) -> API URL config (`services/config.ts`), WebSocket URL derived from it, build settings, security headers incl. CSP.
+- nginx (Docker Compose) did not forward client IP -> `X-Forwarded-For` added.
+- DB pool tuned for managed Postgres (`pre_ping`, recycle, size, connect timeout). Provider HTTP clients are closed on shutdown. API docs disabled in production.
+- **Test isolation bug:** the test suite loaded the developer's real `.env` keys and made a real Finnhub request. Tests now force empty keys (`tests/conftest.py`). (A few Finnhub calls from earlier test runs this session may have used your quota.)
+
+### Verified vs not verified
+- **Verified by running:** backend `pytest` 56 passed (new: production guards, CORS, health 503, health exempt from limiter, login limiter, WebSocket auth/origin/size, deployment-file lint); frontend `tsc` clean, `vitest` 20 passed, `vite build`; Alembic `upgrade head` on SQLite and `--sql` compile for PostgreSQL; a production-mode uvicorn run with the Dockerfile's flags: docs 404, health 200, no `Server` header, CORS allowed/foreign, per-client rate limiting via `X-Forwarded-For` (10 allowed then 429, a different client unaffected), WebSocket ping/subscribe through the proxy; the production build served with the Vercel security headers loaded `/status`, `/crypto`, `/crypto/bitcoin` deep links with no CSP violations; the banner appears when the API is down.
+- **Not verified:** live PostgreSQL (I tried to run an embedded Postgres from a PyPI wheel for this audit; the environment's permission system declined running the extracted binaries, so I deleted them and used the offline DDL compile instead); the Docker image; Render and Vercel behaviour (WebSocket idle timeouts, forwarded-IP header format, cold starts); any keyed provider call; Redis.
+- **Git:** one commit exists, 130 files tracked; no `.env`, `.db`, `node_modules`, `dist` or key-like strings in the tracked files or history (pattern scan). Your local `.env` is ignored and untouched.
+
+### Provider requirements (summary)
+`COINGECKO_API_KEY` (Demo, optional), `FINNHUB_API_KEY`, `TWELVE_DATA_API_KEY`, `FMP_API_KEY`, all optional: a missing key yields an explained "unavailable" state and the rest of the app keeps working. Free-tier limits that affect functionality: indices and non-US symbols often need a paid Twelve Data plan; Finnhub free has no stock candles, index quotes or economic calendar; FMP's free quota is small (about 250 calls/day, and movers/screener/statements depend on plan); CoinGecko keyless is heavily throttled. Details: `docs/API_SETUP.md`.
+
+### Remaining risks
+- JWT is kept in `localStorage` (mitigated by a strict CSP and HTML sanitising; no httpOnly cookie). Tokens last 12 h and cannot be revoked server-side.
+- One instance only: the WebSocket hub, rate limiter and alert loop are in-process. On the free plan the service sleeps and alerts stop evaluating while asleep.
+- `/api/providers` is public and shows provider state and sanitised error text; restrict it if that is not desired.
+- Alembic runs at container start; fine for one instance.
+
+---
+
 ## API configuration and CoinGecko rate-limit pass
 
 ### Configuration audit

@@ -1,5 +1,6 @@
 import type { DataStatus } from '@/types/api'
 import { useAuth } from '@/store/auth'
+import { wsUrl } from '@/services/config'
 
 export interface LiveQuote {
   key: string
@@ -12,30 +13,48 @@ export interface LiveQuote {
 }
 type Listener = (q: LiveQuote) => void
 
-/** Singleton WebSocket client: reference-counted subscriptions, exponential-backoff reconnect. */
+const HEARTBEAT_MS = 25_000 // keeps idle connections from being closed by proxies
+
+/**
+ * Singleton WebSocket client: reference-counted subscriptions, exponential-backoff reconnect, heartbeat.
+ * The JWT is sent in an "auth" message after connecting, never in the URL (URLs end up in server logs).
+ */
 class LiveClient {
   private ws: WebSocket | null = null
   private listeners = new Map<string, Set<Listener>>()
   private retry = 0
   private timer: number | undefined
+  private heartbeat: number | undefined
   connected = false
   private statusListeners = new Set<(c: boolean) => void>()
 
-  private url(): string {
-    const base = import.meta.env.VITE_WS_URL ?? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/ws`
-    const t = useAuth.getState().token
-    return t ? `${base}?token=${encodeURIComponent(t)}` : base
+  constructor() {
+    // Logging in/out while connected re-associates the socket with the right user.
+    useAuth.subscribe((s, prev) => {
+      if (s.token !== prev.token) this.sendAuth()
+    })
+  }
+
+  private send(msg: object) {
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg))
+  }
+
+  private sendAuth() {
+    this.send({ action: 'auth', token: useAuth.getState().token })
   }
 
   private connect() {
     if (this.ws || this.listeners.size === 0) return
-    const ws = new WebSocket(this.url())
+    const ws = new WebSocket(wsUrl())
     this.ws = ws
     ws.onopen = () => {
       this.retry = 0
       this.setConnected(true)
+      if (useAuth.getState().token) this.sendAuth()
       const keys = [...this.listeners.keys()]
-      if (keys.length) ws.send(JSON.stringify({ action: 'subscribe', keys }))
+      if (keys.length) this.send({ action: 'subscribe', keys })
+      window.clearInterval(this.heartbeat)
+      this.heartbeat = window.setInterval(() => this.send({ action: 'ping' }), HEARTBEAT_MS)
     }
     ws.onmessage = (ev) => {
       try {
@@ -47,6 +66,7 @@ class LiveClient {
     }
     ws.onclose = () => {
       this.ws = null
+      window.clearInterval(this.heartbeat)
       this.setConnected(false)
       if (this.listeners.size) {
         const delay = Math.min(30000, 1000 * 2 ** this.retry++)
@@ -72,15 +92,16 @@ class LiveClient {
     set.add(l)
     this.listeners.set(key, set)
     if (this.ws?.readyState === WebSocket.OPEN) {
-      if (isNew) this.ws.send(JSON.stringify({ action: 'subscribe', keys: [key] }))
+      if (isNew) this.send({ action: 'subscribe', keys: [key] })
     } else this.connect()
     return () => {
       set.delete(l)
       if (set.size === 0) {
         this.listeners.delete(key)
-        if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ action: 'unsubscribe', keys: [key] }))
+        this.send({ action: 'unsubscribe', keys: [key] })
         if (this.listeners.size === 0) {
           window.clearTimeout(this.timer)
+          window.clearInterval(this.heartbeat)
           this.ws?.close()
         }
       }

@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { useAuth } from '@/store/auth'
+import { API_BASE } from '@/services/config'
 import type {
   Alert, AssetType, Candle, CompareRow, Coin, CoinDetail, CryptoGlobal, EconEvent, Envelope, IndexRow, IpoItem, LinePoint,
   Metrics, Mover, Article, Paged, PortfolioDetail, Profile, ProviderHealth, Quote, SearchResults, Session, User, Watchlist,
@@ -7,7 +8,7 @@ import type {
 } from '@/types/api'
 
 // API keys never reach the browser: all provider calls go through the backend.
-export const http = axios.create({ baseURL: import.meta.env.VITE_API_URL ?? '/api', timeout: 30000 })
+export const http = axios.create({ baseURL: API_BASE, timeout: 30000 })
 
 http.interceptors.request.use((cfg) => {
   const token = useAuth.getState().token

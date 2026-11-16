@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import current_user
+from app.core.ratelimit import auth_rate_limit
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.session import get_db
 from app.models.models import User, UserPreference, UserProfile, Watchlist
@@ -16,7 +17,7 @@ def to_out(u: User) -> UserOut:
                    theme=u.preferences.theme if u.preferences else "dark", base_currency=u.preferences.base_currency if u.preferences else "USD")
 
 
-@router.post("/register", response_model=TokenOut, status_code=201)
+@router.post("/register", response_model=TokenOut, status_code=201, dependencies=[Depends(auth_rate_limit)])
 def register(body: RegisterIn, db: Session = Depends(get_db)):
     email = body.email.lower()
     if db.scalar(select(User).where(User.email == email)):
@@ -31,7 +32,7 @@ def register(body: RegisterIn, db: Session = Depends(get_db)):
     return TokenOut(access_token=create_access_token(user.id), user=to_out(user))
 
 
-@router.post("/login", response_model=TokenOut)
+@router.post("/login", response_model=TokenOut, dependencies=[Depends(auth_rate_limit)])
 def login(body: LoginIn, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(User.email == body.email.lower()))
     if not user or not verify_password(body.password, user.password_hash):

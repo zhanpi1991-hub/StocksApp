@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { SearchBox } from './SearchBox'
 import { RouteBoundary } from './guards'
+import { ApiBanner } from './ApiBanner'
 import { IconButton } from '@/components/ui/primitives'
 import { useAuth } from '@/store/auth'
 import { useUi } from '@/store/ui'
@@ -97,7 +98,7 @@ export function AppShell() {
           </div>
         </header>
         <main id="main" className="flex-1 overflow-y-auto p-3 sm:p-5">
-          <div className="mx-auto max-w-7xl"><RouteBoundary><Outlet /></RouteBoundary></div>
+          <div className="mx-auto max-w-7xl"><ApiBanner /><RouteBoundary><Outlet /></RouteBoundary></div>
         </main>
       </div>
     </div>

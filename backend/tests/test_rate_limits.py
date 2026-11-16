@@ -208,6 +208,10 @@ def test_api_never_returns_key_values(monkeypatch):
     monkeypatch.setattr(s, "twelve_data_api_key", "TD-SECRET-VALUE")
     monkeypatch.setattr(s, "fmp_api_key", "FMP-SECRET-VALUE")
     monkeypatch.setattr(s, "coingecko_api_key", "CG-SECRET-VALUE")
+    cache.clear()
+    for p in registry.ALL:  # no network: every provider answers 403 from a mock transport
+        monkeypatch.setattr(p, "client", httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(403))))
+        monkeypatch.setattr(p, "cooldown_until", 0.0)
     with TestClient(app) as c:
         for path in ("/api/providers", "/api/health", "/api/stocks/AAPL/quote", "/api/market/indices", "/api/news"):
             body = c.get(path).text

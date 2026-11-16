@@ -33,6 +33,15 @@ class Hub:
         if user_id:
             self.users.setdefault(user_id, set()).add(ws)
 
+    def set_user(self, ws: WebSocket, user_id: int | None) -> None:
+        """(Re)associate a connection with a user (None = anonymous)."""
+        for uid, sockets in list(self.users.items()):
+            sockets.discard(ws)
+            if not sockets:
+                self.users.pop(uid, None)
+        if user_id:
+            self.users.setdefault(user_id, set()).add(ws)
+
     def disconnect(self, ws: WebSocket) -> None:
         subs = self.clients.pop(ws, set())
         for uid, sockets in list(self.users.items()):

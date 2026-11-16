@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.core import cache
@@ -18,7 +19,9 @@ def health():
     except Exception:  # noqa: BLE001
         db_ok = False
     s = get_settings()
-    return {"status": "ok" if db_ok else "degraded", "database": db_ok, "redis": bool(cache._client()) if s.redis_url else "not configured", "env": s.app_env}
+    body = {"status": "ok" if db_ok else "unavailable", "database": db_ok, "redis": bool(cache._client()) if s.redis_url else "not configured", "env": s.app_env}
+    # 503 when the database is unreachable so the platform health check marks the instance unhealthy.
+    return JSONResponse(body, status_code=200 if db_ok else 503)
 
 
 @router.get("/providers")
