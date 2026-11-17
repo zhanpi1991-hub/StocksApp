@@ -1,7 +1,7 @@
 import { Cell, Legend, Line, LineChart, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import type { LinePoint } from '@/types/api'
 
-const PALETTE = ['#6d7cff', '#34d399', '#fbbf24', '#f87171', '#a78bfa', '#22d3ee']
+const PALETTE = ['#d6b66c', '#8fa6c4', '#5fa8a0', '#a58ab8', '#c98b5b', '#a89f91']
 
 export function AllocationPie({ data }: { data: { name: string; value: number }[] }) {
   return (

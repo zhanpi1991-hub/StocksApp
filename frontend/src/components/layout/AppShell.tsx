@@ -1,10 +1,11 @@
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import {
-  Activity, BarChart3, Bell, Bitcoin, CalendarDays, DollarSign, Eye, GitCompare, LayoutDashboard, LogIn, LogOut, Menu,
+  BarChart3, Bell, Bitcoin, CalendarDays, DollarSign, Eye, GitCompare, LayoutDashboard, LogIn, LogOut, Menu,
   Newspaper, Rocket, Server, Settings, SlidersHorizontal, Sun, Moon, Briefcase, X,
 } from 'lucide-react'
 import { SearchBox } from './SearchBox'
 import { RouteBoundary } from './guards'
+import { Wordmark } from '@/components/ui/Wordmark'
 import { ApiBanner } from './ApiBanner'
 import { IconButton } from '@/components/ui/primitives'
 import { useAuth } from '@/store/auth'
@@ -37,9 +38,8 @@ const NAV = [
 
 function Brand() {
   return (
-    <div className="flex items-center gap-2 px-4">
-      <span className="grid h-7 w-7 place-items-center rounded-md bg-accent/15 text-accent"><Activity size={16} /></span>
-      <span className="text-[15px] font-semibold tracking-tight">Stocks<span className="text-accent">App</span></span>
+    <div className="px-5 pb-1 pt-0.5">
+      <Wordmark className="text-[21px]" />
     </div>
   )
 }
@@ -49,10 +49,10 @@ function Nav({ onNavigate }: { onNavigate?: () => void }) {
     <nav aria-label="Primary" className="flex-1 space-y-5 overflow-y-auto px-2 py-4">
       {NAV.map((g) => (
         <div key={g.group}>
-          <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted">{g.group}</p>
+          <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">{g.group}</p>
           {g.items.map(({ to, label, icon: Icon }) => (
             <NavLink key={to} to={to} end={to === '/'} onClick={onNavigate}
-              className={({ isActive }) => cn('flex items-center gap-2.5 rounded-md px-3 py-1.5 text-[13px] transition', isActive ? 'bg-accent/15 text-accent' : 'text-muted hover:bg-surface-2 hover:text-fg')}>
+              className={({ isActive }) => cn('flex items-center gap-2.5 rounded-md border-l-2 px-3 py-1.5 text-[13px] transition', isActive ? 'border-accent bg-surface-2 font-medium text-fg [&>svg]:text-accent' : 'border-transparent text-muted hover:bg-surface-2/60 hover:text-fg')}>
               <Icon size={15} /> {label}
             </NavLink>
           ))}
@@ -68,7 +68,7 @@ export function AppShell() {
   const nav = useNavigate()
   return (
     <div className="flex h-full">
-      <aside className="hidden w-56 shrink-0 flex-col border-r border-line bg-surface py-4 lg:flex"><Brand /><Nav /></aside>
+      <aside className="hidden w-60 shrink-0 flex-col border-r border-line bg-surface py-5 lg:flex"><Brand /><Nav /></aside>
       {sidebarOpen && (
         <div className="fixed inset-0 z-50 lg:hidden" onClick={() => setSidebar(false)}>
           <div className="absolute inset-0 bg-black/60" />
@@ -79,7 +79,7 @@ export function AppShell() {
         </div>
       )}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface/80 px-3 backdrop-blur sm:px-5">
+        <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface px-3 sm:px-5">
           <IconButton label="Open menu" className="lg:hidden" onClick={() => setSidebar(true)}><Menu size={18} /></IconButton>
           <SearchBox />
           <div className="ml-auto flex items-center gap-1">
@@ -93,7 +93,7 @@ export function AppShell() {
                 <IconButton label="Log out" onClick={() => { logout(); nav('/') }}><LogOut size={16} /></IconButton>
               </>
             ) : (
-              <button onClick={() => nav('/login')} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-accent px-3 text-xs font-medium text-white"><LogIn size={14} /> Sign in</button>
+              <button onClick={() => nav('/login')} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-accent px-3.5 text-xs font-semibold text-on-accent transition hover:bg-accent-2"><LogIn size={14} /> Sign in</button>
             )}
           </div>
         </header>

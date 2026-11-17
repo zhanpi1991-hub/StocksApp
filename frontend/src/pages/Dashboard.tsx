@@ -25,7 +25,7 @@ function Summary() {
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       {tiles.map((t) => (
         <Card key={t.k} className="p-4">
-          <p className="text-xs text-muted">{t.k}</p>
+          <p className="text-[10.5px] font-medium uppercase tracking-[0.1em] text-muted">{t.k}</p>
           {q.isLoading ? <div className="skeleton mt-2 h-6 w-24" /> : <p className={cn('num mt-1 text-lg font-semibold', tone(t.t))}>{t.v}</p>}
           {t.sub && <p className={cn('num text-xs', tone(t.t))}>{t.sub}</p>}
         </Card>

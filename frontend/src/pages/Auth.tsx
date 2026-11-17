@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { Activity } from 'lucide-react'
+import { Wordmark } from '@/components/ui/Wordmark'
 import { api } from '@/services/api'
 import { useAuth } from '@/store/auth'
 import { Button, Card, Input } from '@/components/ui/primitives'
@@ -21,8 +21,8 @@ function Frame({ title, children, footer }: { title: string; children: React.Rea
   return (
     <div className="grid min-h-full place-items-center p-4">
       <div className="w-full max-w-sm">
-        <Link to="/" className="mb-6 flex items-center justify-center gap-2 text-lg font-semibold"><Activity className="text-accent" size={20} />Stocks<span className="text-accent">App</span></Link>
-        <Card className="p-6"><h1 className="mb-4 text-lg font-semibold">{title}</h1>{children}</Card>
+        <Link to="/" className="mb-8 flex items-center justify-center"><Wordmark className="text-[30px]" /></Link>
+        <Card className="p-7"><h1 className="mb-5 text-lg font-semibold">{title}</h1>{children}</Card>
         <p className="mt-4 text-center text-xs text-muted">{footer}</p>
       </div>
     </div>
